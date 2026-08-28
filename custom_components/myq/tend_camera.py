@@ -140,9 +140,13 @@ class TendCameraManager:
             with suppress(TimeoutError):
                 async with asyncio.timeout(remaining):
                     await self._new_frame.wait()
-        self._arm_idle_close()
         if self._latest_jpeg is None:
             diagnostics = self._p2p.diagnostics if self._p2p is not None else {}
+            no_post_punch_traffic = (
+                self._p2p is not None
+                and diagnostics.get("post_punch_media_datagrams", 0) == 0
+                and diagnostics.get("post_punch_control_datagrams", 0) == 0
+            )
             _LOGGER.warning(
                 "MyQ camera image timed out (stage=frame_wait, p2p=%s, "
                 "records=%d, nal_units=%d, sps=%d, pps=%d, idr=%d, "
@@ -157,6 +161,18 @@ class TendCameraManager:
                 self._decode_errors,
                 self._decoded_jpegs,
             )
+            if no_post_punch_traffic:
+                if self._idle_task is not None and not self._idle_task.done():
+                    self._idle_task.cancel()
+                    self._idle_task = None
+                await self._close_media()
+                _LOGGER.warning(
+                    "MyQ camera released stalled session (stage=no_post_punch_traffic)"
+                )
+            else:
+                self._arm_idle_close()
+        else:
+            self._arm_idle_close()
         return self._latest_jpeg
 
     async def _open_and_arm_idle(self) -> bool:
