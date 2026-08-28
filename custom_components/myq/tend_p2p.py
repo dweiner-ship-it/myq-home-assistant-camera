@@ -151,6 +151,8 @@ class P2PVideoSession:
         self._transports: dict[bool, asyncio.DatagramTransport] = {}
         self._peers: dict[bool, tuple[str, int] | None] = {False: None, True: None}
         self._connected: dict[bool, bool] = {False: False, True: False}
+        self._peer_selection: dict[bool, str] = {False: "none", True: "none"}
+        self._punch_complete = False
         self._local_ip = ""
         self._frame_number: int | None = None
         self._fragments: list[bytes] = []
@@ -170,6 +172,11 @@ class P2PVideoSession:
             "encrypted_payloads": 0,
             "decrypt_failures": 0,
             "records": 0,
+            "post_punch_media_datagrams": 0,
+            "post_punch_control_datagrams": 0,
+            "post_punch_sdnk_packets": 0,
+            "post_punch_media_fragments": 0,
+            "post_punch_control_payloads": 0,
         }
 
     @property
@@ -178,6 +185,12 @@ class P2PVideoSession:
             **self._stats,
             "media_connected": self._connected[False],
             "control_connected": self._connected[True],
+            "media_peer_exact_local": self._peer_selection[False] == "exact_local",
+            "media_peer_private_fallback": self._peer_selection[False] == "private_fallback",
+            "media_peer_last_fallback": self._peer_selection[False] == "last_fallback",
+            "control_peer_exact_local": self._peer_selection[True] == "exact_local",
+            "control_peer_private_fallback": self._peer_selection[True] == "private_fallback",
+            "control_peer_last_fallback": self._peer_selection[True] == "last_fallback",
         }
 
     async def async_punch(self, timeout: float = 8.0) -> None:
@@ -247,6 +260,7 @@ class P2PVideoSession:
                         transport.sendto(_connect_packet(), peer)
                 sequence = min(sequence + 1, 2)
                 await asyncio.sleep(0.1)
+            self._punch_complete = True
         except Exception:
             self.close()
             raise
@@ -257,12 +271,18 @@ class P2PVideoSession:
         if self._closed:
             return
         self._stats["control_datagrams" if control else "media_datagrams"] += 1
+        if self._punch_complete:
+            self._stats[
+                "post_punch_control_datagrams" if control else "post_punch_media_datagrams"
+            ] += 1
         transport = self._transports.get(control)
         if transport is None:
             return
 
         if len(data) >= 20 and data[:4] == MAGIC:
             self._stats["sdnk_packets"] += 1
+            if self._punch_complete:
+                self._stats["post_punch_sdnk_packets"] += 1
             packet_type = data[7]
             if packet_type == TYPE_PEERS:
                 self._stats["sdnk_peers"] += 1
@@ -275,6 +295,7 @@ class P2PVideoSession:
                     ),
                     None,
                 )
+                selection = "exact_local" if peer is not None else "none"
                 if peer is None:
                     peer = next(
                         (
@@ -285,9 +306,13 @@ class P2PVideoSession:
                         ),
                         None,
                     )
+                    if peer is not None:
+                        selection = "private_fallback"
                 if peer is None and endpoints:
                     peer = endpoints[-1]
+                    selection = "last_fallback"
                 self._peers[control] = peer
+                self._peer_selection[control] = selection
                 if peer is not None:
                     transport.sendto(
                         _relay_ack_packet("V", self.camera.device_id, control),
@@ -319,9 +344,13 @@ class P2PVideoSession:
 
         if not control:
             self._handle_media(data)
+        elif self._punch_complete:
+            self._stats["post_punch_control_payloads"] += 1
 
     def _handle_media(self, data: bytes) -> None:
         self._stats["media_fragments"] += 1
+        if self._punch_complete:
+            self._stats["post_punch_media_fragments"] += 1
         if len(data) < 8:
             return
         frame_number = struct.unpack_from("<I", data, 0)[0]
