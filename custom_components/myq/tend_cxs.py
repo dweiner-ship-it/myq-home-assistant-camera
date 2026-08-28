@@ -312,9 +312,14 @@ class TendCxsClient:
                 continue
             device_id = destination.split(":", 1)[0]
             alias = aliases.get(destination, "")
-            if not device_id.startswith("TC") or alias.casefold() != "video keypad":
+            if not device_id.startswith("TC"):
                 continue
-            if self._expected_device_id is not None and device_id != self._expected_device_id:
+            if self._expected_device_id is not None:
+                expected = "".join(ch for ch in self._expected_device_id.casefold() if ch.isalnum())
+                actual = "".join(ch for ch in device_id.casefold() if ch.isalnum())
+                if actual != expected:
+                    continue
+            elif alias.casefold() != "video keypad":
                 continue
             raw: dict[str, str] = {}
             for item in line[comma + 1 :].split("+"):
