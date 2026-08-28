@@ -50,6 +50,7 @@ class TendCameraManager:
         self._info: ConnectionInfo | None = None
         self._p2p: P2PVideoSession | None = None
         self._open_lock = asyncio.Lock()
+        self._open_task: asyncio.Task[bool] | None = None
         self._latest_jpeg: bytes | None = None
         self._latest_frame_at = 0.0
         self._new_frame = asyncio.Event()
@@ -102,25 +103,42 @@ class TendCameraManager:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         return True
 
-    async def async_get_image(self, timeout: float = 12.0) -> bytes | None:
+    async def async_get_image(self, timeout: float = 8.5) -> bytes | None:
         if self._closed:
+            _LOGGER.warning("MyQ camera image unavailable (stage=manager_closed)")
             return None
+
         loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         if self._latest_jpeg is not None and loop.time() - self._latest_frame_at < 2.0:
             self._arm_idle_close()
             return self._latest_jpeg
 
-        if not await self._ensure_open():
-            return self._latest_jpeg
+        if self._p2p is None:
+            if self._open_task is None or self._open_task.done():
+                self._open_task = asyncio.create_task(self._open_and_arm_idle())
+
+            open_wait = max(0.1, deadline - loop.time() - 0.75)
+            try:
+                async with asyncio.timeout(open_wait):
+                    opened = await asyncio.shield(self._open_task)
+            except TimeoutError:
+                _LOGGER.warning("MyQ camera image pending (stage=session_open_pending)")
+                return self._latest_jpeg
+            if not opened:
+                _LOGGER.warning("MyQ camera image unavailable (stage=session_open_failed)")
+                return self._latest_jpeg
 
         self._new_frame.clear()
         if self._latest_jpeg is not None and loop.time() - self._latest_frame_at < 2.0:
             self._arm_idle_close()
             return self._latest_jpeg
 
-        with suppress(TimeoutError):
-            async with asyncio.timeout(timeout):
-                await self._new_frame.wait()
+        remaining = deadline - loop.time()
+        if remaining > 0:
+            with suppress(TimeoutError):
+                async with asyncio.timeout(remaining):
+                    await self._new_frame.wait()
         self._arm_idle_close()
         if self._latest_jpeg is None:
             diagnostics = self._p2p.diagnostics if self._p2p is not None else {}
@@ -139,6 +157,12 @@ class TendCameraManager:
                 self._decoded_jpegs,
             )
         return self._latest_jpeg
+
+    async def _open_and_arm_idle(self) -> bool:
+        opened = await self._ensure_open()
+        if opened and not self._closed:
+            self._arm_idle_close()
+        return opened
 
     async def _ensure_open(self) -> bool:
         async with self._open_lock:
@@ -306,12 +330,19 @@ class TendCameraManager:
             self._idle_task.cancel()
         if self._keepalive_task is not None:
             self._keepalive_task.cancel()
+        if self._open_task is not None:
+            self._open_task.cancel()
         await self._close_media()
         if self._worker_task is not None:
             self._worker_task.cancel()
         tasks = [
             task
-            for task in (self._idle_task, self._keepalive_task, self._worker_task)
+            for task in (
+                self._idle_task,
+                self._keepalive_task,
+                self._open_task,
+                self._worker_task,
+            )
             if task is not None
         ]
         for task in tasks:
