@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 _LOGGER = logging.getLogger(__name__)
+_SSL_CONTEXT = ssl.create_default_context()
 
 LOGIN_HOST = "server.tend-us.tendplatform.com"
 LOGIN_PORT = 5104
@@ -190,8 +191,9 @@ async def _read_packet(reader: asyncio.StreamReader, timeout: float = 10.0) -> C
 
 
 class TendCxsClient:
-    def __init__(self, access_token_provider: AccessTokenProvider) -> None:
+    def __init__(self, access_token_provider: AccessTokenProvider, expected_device_id: str | None = None) -> None:
         self._access_token_provider = access_token_provider
+        self._expected_device_id = expected_device_id
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._options = bytes(SESSION_OPTIONS_SIZE)
@@ -221,12 +223,11 @@ class TendCxsClient:
         return CxsPacket(action=ACTION_LOGIN, source=source, body=mode + mode)
 
     async def _connect(self, host: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        context = ssl.create_default_context()
         return await asyncio.wait_for(
             asyncio.open_connection(
                 host=host,
                 port=LOGIN_PORT,
-                ssl=context,
+                ssl=_SSL_CONTEXT,
                 server_hostname=LOGIN_HOST,
             ),
             10.0,
@@ -312,6 +313,8 @@ class TendCxsClient:
             device_id = destination.split(":", 1)[0]
             alias = aliases.get(destination, "")
             if not device_id.startswith("TC") or alias.casefold() != "video keypad":
+                continue
+            if self._expected_device_id is not None and device_id != self._expected_device_id:
                 continue
             raw: dict[str, str] = {}
             for item in line[comma + 1 :].split("+"):

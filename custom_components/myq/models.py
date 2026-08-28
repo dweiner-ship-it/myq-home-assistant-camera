@@ -53,6 +53,15 @@ class GarageDoor:
     last_device_activation_source: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class MyQCamera:
+    account_id: str
+    serial_number: str
+    name: str
+    device_model: str | None
+    online: bool | None
+
+
 type MyQCoordinatorData = dict[str, GarageDoor]
 
 

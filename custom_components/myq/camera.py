@@ -1,56 +1,66 @@
 from __future__ import annotations
 
-from typing import Any
-
 from aiohttp import web
 from homeassistant.components.camera import Camera, async_get_still_stream
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .models import MyQRuntimeData
+from .models import MyQConfigEntry, MyQCamera
 from .tend_camera import TendCameraManager
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry[MyQRuntimeData],
+    entry: MyQConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    manager = entry.runtime_data.camera_manager
-    if not await manager.async_discover():
+    cameras = await entry.runtime_data.client.async_get_cameras()
+    video_keypads = [
+        camera
+        for camera in cameras
+        if camera.device_model == "vkp-camera"
+        and camera.serial_number.startswith("TC")
+    ]
+    if not video_keypads:
         return
-    async_add_entities([MyQVideoKeypadCamera(manager)])
+    camera = video_keypads[0]
+    manager = TendCameraManager(
+        entry.runtime_data.client.async_access_token,
+        camera.serial_number,
+    )
+    async_add_entities([MyQVideoKeypadCamera(camera, manager)])
 
 
 class MyQVideoKeypadCamera(Camera):
-    _attr_name = "Video Keypad Camera"
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_is_on = True
+    _attr_name = "Camera"
     _attr_model = "MyQ Video Keypad"
 
-    def __init__(self, manager: TendCameraManager) -> None:
+    def __init__(self, camera: MyQCamera, manager: TendCameraManager) -> None:
         super().__init__()
+        self._camera = camera
         self._manager = manager
         self._attr_unique_id = manager.unique_id
 
     @property
     def available(self) -> bool:
-        return self._manager.discovered
+        return self._camera.online is not False
 
     @property
-    def device_info(self) -> DeviceInfo | None:
-        if self._manager.unique_id is None:
-            return None
+    def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, self._manager.unique_id)},
-            name="Video Keypad",
+            identifiers={(DOMAIN, self._camera.serial_number)},
+            name=self._camera.name,
             manufacturer="Chamberlain Group",
             model="MyQ Video Keypad",
         )
+
+    async def async_will_remove_from_hass(self) -> None:
+        await self._manager.async_close()
 
     async def async_camera_image(
         self,

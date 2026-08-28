@@ -17,7 +17,7 @@ from .const import (
     USER_AGENT,
 )
 from .exceptions import MyQApiError, MyQAuthenticationError
-from .models import GarageDoor, MyQAccount
+from .models import GarageDoor, MyQAccount, MyQCamera
 
 
 class MyQClient:
@@ -61,6 +61,13 @@ class MyQClient:
         )
         return tuple(door for group in door_groups for door in group)
 
+    async def async_get_cameras(self) -> tuple[MyQCamera, ...]:
+        accounts = await self.async_get_accounts()
+        camera_groups = await asyncio.gather(
+            *(self._async_get_account_cameras(account) for account in accounts)
+        )
+        return tuple(camera for group in camera_groups for camera in group)
+
     async def async_open_door(self, door: GarageDoor) -> None:
         await self._async_command(door, "open")
 
@@ -88,6 +95,44 @@ class MyQClient:
                 continue
             doors.append(_garage_door(account.account_id, item))
         return tuple(doors)
+
+    async def _async_get_account_cameras(
+        self,
+        account: MyQAccount,
+    ) -> tuple[MyQCamera, ...]:
+        payload = await self._async_request_json(
+            "GET",
+            f"{DEVICES_BASE_URL}/api/v6.2/Accounts/{account.account_id}/Devices",
+        )
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list):
+            raise MyQApiError("MyQ device discovery returned no item list")
+
+        cameras: list[MyQCamera] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            item = cast(dict[str, object], raw_item)
+            if item.get("device_family") != "camera":
+                continue
+            serial_number = item.get("serial_number")
+            name = item.get("name")
+            model = item.get("device_model")
+            raw_state = item.get("state")
+            state = cast(dict[str, object], raw_state) if isinstance(raw_state, dict) else {}
+            online = state.get("online")
+            if not isinstance(serial_number, str):
+                continue
+            cameras.append(
+                MyQCamera(
+                    account_id=account.account_id,
+                    serial_number=serial_number,
+                    name=name if isinstance(name, str) else serial_number,
+                    device_model=model if isinstance(model, str) else None,
+                    online=online if isinstance(online, bool) else None,
+                )
+            )
+        return tuple(cameras)
 
     async def _async_command(self, door: GarageDoor, command: str) -> None:
         url = (

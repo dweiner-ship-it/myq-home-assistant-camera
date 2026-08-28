@@ -43,8 +43,9 @@ def _nals(data: bytes) -> list[tuple[int, bytes]]:
 
 
 class TendCameraManager:
-    def __init__(self, access_token_provider: AccessTokenProvider) -> None:
-        self._cxs = TendCxsClient(access_token_provider)
+    def __init__(self, access_token_provider: AccessTokenProvider, expected_device_id: str | None = None) -> None:
+        self._cxs = TendCxsClient(access_token_provider, expected_device_id)
+        self._expected_device_id = expected_device_id
         self._camera: TendCamera | None = None
         self._info: ConnectionInfo | None = None
         self._p2p: P2PVideoSession | None = None
@@ -63,7 +64,11 @@ class TendCameraManager:
         self._last_release_at = 0.0
         self._closed = False
         self._discovered = False
-        self._unique_id: str | None = None
+        self._unique_id: str | None = (
+            "video-keypad-" + hashlib.sha256(expected_device_id.encode()).hexdigest()[:16]
+            if expected_device_id
+            else None
+        )
 
     @property
     def discovered(self) -> bool:
