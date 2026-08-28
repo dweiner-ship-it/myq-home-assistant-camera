@@ -476,7 +476,12 @@ class TendCxsClient:
             elif body.startswith(b"reject") or body.startswith(b"error"):
                 category = "reject_or_error"
             elif body:
-                category = "other_body"
+                command = re.match(rb"([A-Za-z][A-Za-z0-9_-]{0,39})\|", body)
+                category = (
+                    "command_" + command.group(1).decode("ascii", errors="ignore")
+                    if command is not None
+                    else "other_body"
+                )
             else:
                 category = "empty_body"
             observed.append((packet.action, packet.result, category))
