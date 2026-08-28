@@ -159,6 +159,11 @@ class P2PVideoSession:
             "media_datagrams": 0,
             "control_datagrams": 0,
             "sdnk_packets": 0,
+            "sdnk_peers": 0,
+            "sdnk_punch": 0,
+            "sdnk_connect": 0,
+            "sdnk_connected": 0,
+            "sdnk_other": 0,
             "media_fragments": 0,
             "rtp_packets": 0,
             "payload_packets": 0,
@@ -260,6 +265,7 @@ class P2PVideoSession:
             self._stats["sdnk_packets"] += 1
             packet_type = data[7]
             if packet_type == TYPE_PEERS:
+                self._stats["sdnk_peers"] += 1
                 endpoints = _parse_peer_packet(data)
                 peer = next(
                     (
@@ -288,18 +294,27 @@ class P2PVideoSession:
                         (self.info.relay_host, self.info.relay_port),
                     )
             elif packet_type == TYPE_PUNCH:
+                self._stats["sdnk_punch"] += 1
+                if self._connected[control]:
+                    return
                 self._peers[control] = remote
                 for sequence in range(3):
                     transport.sendto(
                         _punch_packet("V", self.camera.device_id, sequence), remote
                     )
             elif packet_type == TYPE_CONNECT:
+                self._stats["sdnk_connect"] += 1
+                if self._connected[control]:
+                    return
                 self._peers[control] = remote
                 payload = data[20:21] or b"\x01"
                 transport.sendto(_sdnk(TYPE_CONNECTED, payload), remote)
             elif packet_type == TYPE_CONNECTED:
+                self._stats["sdnk_connected"] += 1
                 self._peers[control] = remote
                 self._connected[control] = True
+            else:
+                self._stats["sdnk_other"] += 1
             return
 
         if not control:
