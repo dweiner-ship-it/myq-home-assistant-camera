@@ -304,6 +304,7 @@ class TendCxsClient:
                 aliases[fields[0]] = fields[5]
 
         candidates: list[TendCamera] = []
+        candidate_profiles: list[dict[str, object]] = []
         for line in properties.get("device-info-list", "").splitlines():
             comma = line.find(",")
             if comma < 0:
@@ -333,6 +334,33 @@ class TendCxsClient:
                     local_port=local_port,
                     cxs_destination=destination,
                 )
+            )
+            alias_folded = alias.strip().casefold()
+            identity_keys = sorted(
+                key
+                for key in raw
+                if any(
+                    token in key.upper()
+                    for token in ("MODEL", "TYPE", "PRODUCT", "SERIAL", "NAME", "DEVICE")
+                )
+            )
+            candidate_profiles.append(
+                {
+                    "slot": len(candidates),
+                    "id_length": len("".join(ch for ch in device_id if ch.isalnum())),
+                    "alias_present": bool(alias_folded),
+                    "alias_length": len(alias.strip()),
+                    "alias_has_video": "video" in alias_folded,
+                    "alias_has_keypad": "keypad" in alias_folded,
+                    "alias_has_garage": "garage" in alias_folded,
+                    "has_aes": bool(raw.get("AES")),
+                    "has_local_ip": bool(raw.get("LIP")),
+                    "has_local_port": bool(raw.get("LPORT")),
+                    "has_mac": bool(raw.get("MAC")),
+                    "deep_sleep": raw.get("PWR_SLEEP_MODE") == "DEEP",
+                    "identity_keys": identity_keys,
+                    "capability_key_count": len(raw),
+                }
             )
 
         def normalized(value: str) -> str:
@@ -364,6 +392,44 @@ class TendCxsClient:
             len(exact_matches),
             len(alias_matches),
         )
+        expected_normalized = (
+            normalized(self._expected_device_id)
+            if self._expected_device_id is not None
+            else ""
+        )
+        for camera, profile in zip(candidates, candidate_profiles, strict=True):
+            candidate_normalized = normalized(camera.device_id)
+            profile["expected_contains_candidate"] = bool(
+                expected_normalized
+                and candidate_normalized
+                and candidate_normalized in expected_normalized
+            )
+            profile["candidate_contains_expected"] = bool(
+                expected_normalized
+                and candidate_normalized
+                and expected_normalized in candidate_normalized
+            )
+            profile["common_prefix_length"] = next(
+                (
+                    index
+                    for index, pair in enumerate(
+                        zip(expected_normalized, candidate_normalized, strict=False)
+                    )
+                    if pair[0] != pair[1]
+                ),
+                min(len(expected_normalized), len(candidate_normalized)),
+            )
+            profile["common_suffix_length"] = next(
+                (
+                    index
+                    for index, pair in enumerate(
+                        zip(expected_normalized[::-1], candidate_normalized[::-1], strict=False)
+                    )
+                    if pair[0] != pair[1]
+                ),
+                min(len(expected_normalized), len(candidate_normalized)),
+            )
+            _LOGGER.warning("MyQ camera candidate profile: %s", profile)
         return None
 
     def _connection_info(
