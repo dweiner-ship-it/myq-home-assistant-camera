@@ -154,6 +154,14 @@ class P2PVideoSession:
         self._peers: dict[bool, tuple[str, int] | None] = {False: None, True: None}
         self._connected: dict[bool, bool] = {False: False, True: False}
         self._peer_selection: dict[bool, str] = {False: "none", True: "none"}
+        self._peer_endpoint_count: dict[bool, int] = {False: 0, True: 0}
+        self._peer_public_count: dict[bool, int] = {False: 0, True: 0}
+        self._peer_camera_local_present: dict[bool, bool] = {False: False, True: False}
+        self._peer_local_present: dict[bool, bool] = {False: False, True: False}
+        self._initial_peer: dict[bool, tuple[str, int] | None] = {False: None, True: None}
+        self._punch_matches_initial: dict[bool, bool] = {False: False, True: False}
+        self._punch_changed_initial: dict[bool, bool] = {False: False, True: False}
+        self._punch_remote_private: dict[bool, bool] = {False: False, True: False}
         self._punch_complete = False
         self._local_ssrc = secrets.randbits(32)
         self._local_ip = ""
@@ -194,6 +202,20 @@ class P2PVideoSession:
             "control_peer_exact_local": self._peer_selection[True] == "exact_local",
             "control_peer_private_fallback": self._peer_selection[True] == "private_fallback",
             "control_peer_last_fallback": self._peer_selection[True] == "last_fallback",
+            "media_peer_endpoint_count": self._peer_endpoint_count[False],
+            "control_peer_endpoint_count": self._peer_endpoint_count[True],
+            "media_peer_public_count": self._peer_public_count[False],
+            "control_peer_public_count": self._peer_public_count[True],
+            "media_peer_camera_local_present": self._peer_camera_local_present[False],
+            "control_peer_camera_local_present": self._peer_camera_local_present[True],
+            "media_peer_ha_local_present": self._peer_local_present[False],
+            "control_peer_ha_local_present": self._peer_local_present[True],
+            "media_punch_matches_initial": self._punch_matches_initial[False],
+            "control_punch_matches_initial": self._punch_matches_initial[True],
+            "media_punch_changed_initial": self._punch_changed_initial[False],
+            "control_punch_changed_initial": self._punch_changed_initial[True],
+            "media_punch_remote_private": self._punch_remote_private[False],
+            "control_punch_remote_private": self._punch_remote_private[True],
         }
 
     async def async_punch(self, timeout: float = 8.0) -> None:
@@ -290,6 +312,16 @@ class P2PVideoSession:
             if packet_type == TYPE_PEERS:
                 self._stats["sdnk_peers"] += 1
                 endpoints = _parse_peer_packet(data)
+                self._peer_endpoint_count[control] = len(endpoints)
+                self._peer_public_count[control] = sum(
+                    1 for endpoint in endpoints if not _private(endpoint[0])
+                )
+                self._peer_camera_local_present[control] = any(
+                    endpoint[0] == self.camera.local_ip for endpoint in endpoints
+                )
+                self._peer_local_present[control] = any(
+                    endpoint[0] == self._local_ip for endpoint in endpoints
+                )
                 peer = next(
                     (
                         endpoint
@@ -315,6 +347,7 @@ class P2PVideoSession:
                     peer = endpoints[-1]
                     selection = "last_fallback"
                 self._peers[control] = peer
+                self._initial_peer[control] = peer
                 self._peer_selection[control] = selection
                 if peer is not None:
                     transport.sendto(
@@ -325,6 +358,13 @@ class P2PVideoSession:
                 self._stats["sdnk_punch"] += 1
                 if self._connected[control]:
                     return
+                initial_peer = self._initial_peer[control]
+                if initial_peer is not None:
+                    if remote == initial_peer:
+                        self._punch_matches_initial[control] = True
+                    else:
+                        self._punch_changed_initial[control] = True
+                self._punch_remote_private[control] = _private(remote[0])
                 self._peers[control] = remote
                 for sequence in range(3):
                     transport.sendto(
