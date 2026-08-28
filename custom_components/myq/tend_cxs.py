@@ -303,6 +303,14 @@ class TendCxsClient:
             if fields and ":" in fields[0] and len(fields) >= 6:
                 aliases[fields[0]] = fields[5]
 
+        def safe_device_metadata(value: str) -> str:
+            value = value.strip()
+            if not value:
+                return ""
+            if len(value) <= 64 and re.fullmatch(r"[A-Za-z0-9._:/-]+", value):
+                return value
+            return "<present>"
+
         candidates: list[TendCamera] = []
         candidate_profiles: list[dict[str, object]] = []
         for line in properties.get("device-info-list", "").splitlines():
@@ -353,6 +361,10 @@ class TendCxsClient:
                     "alias_has_video": "video" in alias_folded,
                     "alias_has_keypad": "keypad" in alias_folded,
                     "alias_has_garage": "garage" in alias_folded,
+                    "alias_is_camera": alias_folded == "camera",
+                    "model": safe_device_metadata(raw.get("MODEL", "")),
+                    "md_type": safe_device_metadata(raw.get("MD_TYPE", "")),
+                    "ptz_type": safe_device_metadata(raw.get("PTZTYPE", "")),
                     "has_aes": bool(raw.get("AES")),
                     "has_local_ip": bool(raw.get("LIP")),
                     "has_local_port": bool(raw.get("LPORT")),
