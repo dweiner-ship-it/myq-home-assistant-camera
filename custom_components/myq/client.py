@@ -25,6 +25,9 @@ class MyQClient:
         self._session = session
         self._auth = auth
 
+    async def async_access_token(self) -> str:
+        return await self._auth.async_access_token()
+
     async def async_get_accounts(self) -> tuple[MyQAccount, ...]:
         payload = await self._async_request_json(
             "GET",

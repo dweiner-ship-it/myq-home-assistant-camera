@@ -14,10 +14,12 @@ from .const import CONF_TOKENS, DOMAIN
 from .coordinator import MyQDataUpdateCoordinator
 from .exceptions import MyQApiError, MyQAuthenticationError
 from .models import MyQConfigData, MyQConfigEntry, MyQRuntimeData, OAuthTokens
+from .tend_camera import TendCameraManager
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PLATFORMS: tuple[Platform, ...] = (
     Platform.BINARY_SENSOR,
+    Platform.CAMERA,
     Platform.COVER,
     Platform.SENSOR,
 )
@@ -41,6 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyQConfigEntry) -> bool:
             async_store_tokens,
         )
         client = MyQClient(async_get_clientsession(hass), auth)
+        camera_manager = TendCameraManager(client.async_access_token)
         coordinator = MyQDataUpdateCoordinator(hass, entry, client)
         await coordinator.async_config_entry_first_refresh()
     except MyQAuthenticationError as error:
@@ -59,10 +62,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyQConfigEntry) -> bool:
             translation_key="api_error",
         ) from error
 
-    entry.runtime_data = MyQRuntimeData(client=client, coordinator=coordinator)
+    entry.runtime_data = MyQRuntimeData(
+        client=client, coordinator=coordinator, camera_manager=camera_manager
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: MyQConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.camera_manager.async_close()
+    return unloaded

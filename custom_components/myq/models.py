@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 if TYPE_CHECKING:
     from .client import MyQClient
     from .coordinator import MyQDataUpdateCoordinator
+    from .tend_camera import TendCameraManager
 
 
 class StoredTokens(TypedDict):
@@ -59,6 +60,7 @@ type MyQCoordinatorData = dict[str, GarageDoor]
 class MyQRuntimeData:
     client: MyQClient
     coordinator: MyQDataUpdateCoordinator
+    camera_manager: TendCameraManager
 
 
 type MyQConfigEntry = ConfigEntry[MyQRuntimeData]

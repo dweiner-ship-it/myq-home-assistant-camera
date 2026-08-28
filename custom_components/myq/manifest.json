@@ -1,11 +1,20 @@
 {
   "domain": "myq",
   "name": "MyQ",
-  "codeowners": ["@bvdcode"],
+  "codeowners": [
+    "@bvdcode"
+  ],
   "config_flow": true,
-  "documentation": "https://github.com/bvdcode/myq-home-assistant",
+  "documentation": "https://github.com/dweiner-ship-it/myq-home-assistant-camera",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/bvdcode/myq-home-assistant/issues",
-  "version": "0.1.5"
+  "issue_tracker": "https://github.com/dweiner-ship-it/myq-home-assistant-camera/issues",
+  "version": "0.2.0",
+  "dependencies": [
+    "stream"
+  ],
+  "requirements": [
+    "cryptography==48.0.1",
+    "Pillow==12.3.0"
+  ]
 }
