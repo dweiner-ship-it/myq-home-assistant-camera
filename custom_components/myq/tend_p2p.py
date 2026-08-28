@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import secrets
 import socket
 import struct
 from collections.abc import Callable
+from contextlib import suppress
 
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -153,6 +155,7 @@ class P2PVideoSession:
         self._connected: dict[bool, bool] = {False: False, True: False}
         self._peer_selection: dict[bool, str] = {False: "none", True: "none"}
         self._punch_complete = False
+        self._local_ssrc = secrets.randbits(32)
         self._local_ip = ""
         self._frame_number: int | None = None
         self._fragments: list[bytes] = []
@@ -400,11 +403,26 @@ class P2PVideoSession:
             self._on_record(bytes(combined[offset:end]))
             offset = end
 
+    def _send_bye(self) -> None:
+        transport = self._transports.get(True)
+        peer = self._peers.get(True)
+        if transport is None or peer is None:
+            return
+        bye = bytearray(8)
+        bye[0] = 0x81
+        bye[1] = 203
+        struct.pack_into(">H", bye, 2, 1)
+        struct.pack_into(">I", bye, 4, self._local_ssrc)
+        with suppress(OSError):
+            transport.sendto(bytes(bye), peer)
+            transport.sendto(bytes(bye), peer)
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._flush_rtp()
+        self._send_bye()
         for transport in self._transports.values():
             transport.close()
         self._transports.clear()
