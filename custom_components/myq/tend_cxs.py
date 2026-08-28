@@ -451,6 +451,43 @@ class TendCxsClient:
             f"modify-device|{camera.device_id}|QTY=3+FPS=20+SIZE=0+SAVE=0|",
             camera.cxs_destination,
         )
+        await self._probe_start_response()
+
+    async def _probe_start_response(self) -> None:
+        if self._reader is None:
+            return
+        observed: list[tuple[int, int, str]] = []
+        deadline = asyncio.get_running_loop().time() + 1.0
+        for _ in range(3):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                packet = await _read_packet(self._reader, min(remaining, 0.4))
+            except (TimeoutError, asyncio.TimeoutError):
+                break
+            body = packet.body
+            if body.startswith(b"accept-video-receive|"):
+                category = "accept_video"
+            elif body.startswith(b"start-video-receive|"):
+                category = "start_video"
+            elif body.startswith(b"modify-device|"):
+                category = "modify_device"
+            elif body.startswith(b"reject") or body.startswith(b"error"):
+                category = "reject_or_error"
+            elif body:
+                category = "other_body"
+            else:
+                category = "empty_body"
+            observed.append((packet.action, packet.result, category))
+        if observed:
+            _LOGGER.warning(
+                "MyQ camera start signaling responses (count=%d, classes=%s)",
+                len(observed),
+                observed,
+            )
+        else:
+            _LOGGER.warning("MyQ camera start signaling responses (count=0)")
 
     async def async_stop_video(
         self, camera: TendCamera, info: ConnectionInfo
