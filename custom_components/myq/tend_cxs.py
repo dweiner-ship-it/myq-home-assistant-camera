@@ -303,6 +303,7 @@ class TendCxsClient:
             if fields and ":" in fields[0] and len(fields) >= 6:
                 aliases[fields[0]] = fields[5]
 
+        candidates: list[TendCamera] = []
         for line in properties.get("device-info-list", "").splitlines():
             comma = line.find(",")
             if comma < 0:
@@ -312,15 +313,6 @@ class TendCxsClient:
                 continue
             device_id = destination.split(":", 1)[0]
             alias = aliases.get(destination, "")
-            if not device_id.startswith("TC"):
-                continue
-            if self._expected_device_id is not None:
-                expected = "".join(ch for ch in self._expected_device_id.casefold() if ch.isalnum())
-                actual = "".join(ch for ch in device_id.casefold() if ch.isalnum())
-                if actual != expected:
-                    continue
-            elif alias.casefold() != "video keypad":
-                continue
             raw: dict[str, str] = {}
             for item in line[comma + 1 :].split("+"):
                 if "=" in item:
@@ -331,15 +323,47 @@ class TendCxsClient:
                 local_port = int(raw.get("LPORT", "0"))
             except ValueError:
                 pass
-            return TendCamera(
-                device_id=device_id,
-                alias=alias,
-                aes_key=raw.get("AES", ""),
-                online=raw.get("PWR_SLEEP_MODE") != "DEEP",
-                local_ip=raw.get("LIP", ""),
-                local_port=local_port,
-                cxs_destination=destination,
+            candidates.append(
+                TendCamera(
+                    device_id=device_id,
+                    alias=alias,
+                    aes_key=raw.get("AES", ""),
+                    online=raw.get("PWR_SLEEP_MODE") != "DEEP",
+                    local_ip=raw.get("LIP", ""),
+                    local_port=local_port,
+                    cxs_destination=destination,
+                )
             )
+
+        def normalized(value: str) -> str:
+            return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+        exact_matches: list[TendCamera] = []
+        if self._expected_device_id is not None:
+            expected = normalized(self._expected_device_id)
+            exact_matches = [
+                camera for camera in candidates if normalized(camera.device_id) == expected
+            ]
+            if len(exact_matches) == 1:
+                _LOGGER.debug("MyQ camera selected (selection=expected_id)")
+                return exact_matches[0]
+
+        alias_matches = [
+            camera
+            for camera in candidates
+            if camera.alias.strip().casefold() == "video keypad"
+        ]
+        if len(alias_matches) == 1:
+            _LOGGER.debug("MyQ camera selected (selection=video_keypad_alias)")
+            return alias_matches[0]
+
+        _LOGGER.warning(
+            "MyQ camera selector found no unique Video Keypad match "
+            "(candidate_count=%d, exact_id_matches=%d, alias_matches=%d)",
+            len(candidates),
+            len(exact_matches),
+            len(alias_matches),
+        )
         return None
 
     def _connection_info(
