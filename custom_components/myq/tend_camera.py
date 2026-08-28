@@ -18,6 +18,7 @@ AccessTokenProvider = Callable[[], Awaitable[str]]
 NAL_IDR = 5
 NAL_SPS = 7
 NAL_PPS = 8
+IDLE_CLOSE_SECONDS = 45.0
 
 
 def _nals(data: bytes) -> list[tuple[int, bytes]]:
@@ -291,7 +292,7 @@ class TendCameraManager:
 
     async def _idle_close(self) -> None:
         try:
-            await asyncio.sleep(20.0)
+            await asyncio.sleep(IDLE_CLOSE_SECONDS)
             await self._close_media()
         except asyncio.CancelledError:
             raise
