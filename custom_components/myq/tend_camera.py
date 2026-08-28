@@ -61,6 +61,14 @@ class TendCameraManager:
         self._sps: bytes | None = None
         self._pps: bytes | None = None
         self._gate_open = False
+        self._records_seen = 0
+        self._nal_units_seen = 0
+        self._sps_seen = 0
+        self._pps_seen = 0
+        self._idr_seen = 0
+        self._decode_attempts = 0
+        self._decode_errors = 0
+        self._decoded_jpegs = 0
         self._last_release_at = 0.0
         self._closed = False
         self._discovered = False
@@ -114,6 +122,22 @@ class TendCameraManager:
             async with asyncio.timeout(timeout):
                 await self._new_frame.wait()
         self._arm_idle_close()
+        if self._latest_jpeg is None:
+            diagnostics = self._p2p.diagnostics if self._p2p is not None else {}
+            _LOGGER.warning(
+                "MyQ camera image timed out (stage=frame_wait, p2p=%s, "
+                "records=%d, nal_units=%d, sps=%d, pps=%d, idr=%d, "
+                "decode_attempts=%d, decode_errors=%d, decoded_jpegs=%d)",
+                diagnostics,
+                self._records_seen,
+                self._nal_units_seen,
+                self._sps_seen,
+                self._pps_seen,
+                self._idr_seen,
+                self._decode_attempts,
+                self._decode_errors,
+                self._decoded_jpegs,
+            )
         return self._latest_jpeg
 
     async def _ensure_open(self) -> bool:
@@ -155,14 +179,19 @@ class TendCameraManager:
     def _on_record(self, record: bytes) -> None:
         if self._closed:
             return
+        self._records_seen += 1
         units = _nals(record)
+        self._nal_units_seen += len(units)
         idr = False
         for nal_type, nal in units:
             if nal_type == NAL_SPS:
+                self._sps_seen += 1
                 self._sps = nal
             elif nal_type == NAL_PPS:
+                self._pps_seen += 1
                 self._pps = nal
             elif nal_type == NAL_IDR:
+                self._idr_seen += 1
                 idr = True
 
         frames: list[bytes] = []
@@ -186,14 +215,17 @@ class TendCameraManager:
         while not self._closed:
             record = await self._record_queue.get()
             try:
+                self._decode_attempts += 1
                 jpeg = await asyncio.to_thread(self._decode_record, record)
             except Exception as error:
+                self._decode_errors += 1
                 _LOGGER.debug(
                     "MyQ camera frame decode failed (error_type=%s)",
                     type(error).__name__,
                 )
                 continue
             if jpeg is not None:
+                self._decoded_jpegs += 1
                 self._latest_jpeg = jpeg
                 self._latest_frame_at = asyncio.get_running_loop().time()
                 self._new_frame.set()
@@ -216,6 +248,14 @@ class TendCameraManager:
         self._sps = None
         self._pps = None
         self._gate_open = False
+        self._records_seen = 0
+        self._nal_units_seen = 0
+        self._sps_seen = 0
+        self._pps_seen = 0
+        self._idr_seen = 0
+        self._decode_attempts = 0
+        self._decode_errors = 0
+        self._decoded_jpegs = 0
         while not self._record_queue.empty():
             with suppress(asyncio.QueueEmpty):
                 self._record_queue.get_nowait()

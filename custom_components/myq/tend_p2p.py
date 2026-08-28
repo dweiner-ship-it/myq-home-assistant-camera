@@ -155,6 +155,25 @@ class P2PVideoSession:
         self._frame_number: int | None = None
         self._fragments: list[bytes] = []
         self._closed = False
+        self._stats: dict[str, int] = {
+            "media_datagrams": 0,
+            "control_datagrams": 0,
+            "sdnk_packets": 0,
+            "media_fragments": 0,
+            "rtp_packets": 0,
+            "payload_packets": 0,
+            "encrypted_payloads": 0,
+            "decrypt_failures": 0,
+            "records": 0,
+        }
+
+    @property
+    def diagnostics(self) -> dict[str, int | bool]:
+        return {
+            **self._stats,
+            "media_connected": self._connected[False],
+            "control_connected": self._connected[True],
+        }
 
     async def async_punch(self, timeout: float = 8.0) -> None:
         if not self.info.relay_host or not self.info.relay_port:
@@ -232,11 +251,13 @@ class P2PVideoSession:
     ) -> None:
         if self._closed:
             return
+        self._stats["control_datagrams" if control else "media_datagrams"] += 1
         transport = self._transports.get(control)
         if transport is None:
             return
 
         if len(data) >= 20 and data[:4] == MAGIC:
+            self._stats["sdnk_packets"] += 1
             packet_type = data[7]
             if packet_type == TYPE_PEERS:
                 endpoints = _parse_peer_packet(data)
@@ -285,6 +306,7 @@ class P2PVideoSession:
             self._handle_media(data)
 
     def _handle_media(self, data: bytes) -> None:
+        self._stats["media_fragments"] += 1
         if len(data) < 8:
             return
         frame_number = struct.unpack_from("<I", data, 0)[0]
@@ -302,11 +324,13 @@ class P2PVideoSession:
         self._fragments.clear()
         if len(rtp) < 12 or rtp[0] >> 6 != 2:
             return
+        self._stats["rtp_packets"] += 1
         self._process_payload(rtp[12:])
 
     def _process_payload(self, payload: bytes) -> None:
         if len(payload) < 10 or payload[:2] != b"w1":
             return
+        self._stats["payload_packets"] += 1
         length = struct.unpack_from("<I", payload, 2)[0]
         if length + 6 != len(payload):
             return
@@ -315,8 +339,10 @@ class P2PVideoSession:
         combined = payload[10 : 10 + combined_length]
         try:
             if encrypted:
+                self._stats["encrypted_payloads"] += 1
                 combined = _decrypt(self.info.aes_key, combined)
         except Exception:
+            self._stats["decrypt_failures"] += 1
             _LOGGER.debug("MyQ camera media decrypt failed")
             return
         offset = 0
@@ -326,6 +352,7 @@ class P2PVideoSession:
             end = offset + record_length
             if record_length <= 0 or end > len(combined):
                 break
+            self._stats["records"] += 1
             self._on_record(bytes(combined[offset:end]))
             offset = end
 
